@@ -62,8 +62,6 @@ Suggested experiments for a logistic manuscript
 - Robust warehouse location under demand uncertainty (compare Euclidean vs grid metric, measure expected route cost and robustness under demand sampling)
 - Empirical analysis of metaheuristics for CVRP on grid networks (time vs quality, parameter sensitivity)
 
-If you want, I can scaffold a reproducible experiment runner (JSON config → worker runs → ZIP with CSV+LaTeX+metadata) and example configs for the paper.
-
 License: MIT
 
 ---
@@ -74,11 +72,3 @@ New in this update
 - Depot timing measurements moved to the Worker: measured BFS times for top-K candidates are computed in the Worker and returned for plotting/export.
 - Logging: colorized severity levels, clear/download/filter controls, and optional auto-download of logs when simulations finish.
 - Depot timings CSV export button (near the "Recommend Warehouse" control).
-
-Paper ideas you can write with this project
-
-1. "Euclidean vs Grid Metrics for Warehouse Location on Urban Grids": empirical study comparing depot recommendations and resulting route costs under both metrics with demand uncertainty.
-2. "Empirical Comparison of Metaheuristics for Grid-based CVRP": compare NN, 2-Opt, SA and GA across time-quality tradeoffs, parameter sensitivity, and paired statistical tests.
-3. "Single-pass Multi-source Routing for Demand-weighted Location Scoring": extend the project with the proposed single-pass Dijkstra and report large-scale performance gains and accuracy.
-
-If you'd like, I can scaffold example experiment configs and a small runner to generate reproducible result bundles (CSV + LaTeX + scenario JSON).
