@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>VRP Simulation - Grid Route Optimizer</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>VRP Simulation — Grid Route Optimizer</h1>
+
+      <div class="controls">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <label>Grid rows (m): <input id="rows" type="number" min="1" value="6" /></label>
+          <label>Grid cols (n): <input id="cols" type="number" min="1" value="6" /></label>
+          <button id="createGrid">Create Grid</button>
+          <button id="clearPoints">Clear Points</button>
+          <label>Random Points: <input id="randomJ" type="number" min="1" value="5" style="width:64px"/></label>
+          <button id="randomPoints">Random</button>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <label>Mode:
+            <select id="mode">
+              <option value="point">Place Points</option>
+              <option value="obstacle">Toggle Obstacle</option>
+              <option value="depot">Set Depot</option>
+              <option value="dstart">Dijkstra: Start</option>
+              <option value="dend">Dijkstra: End</option>
+            </select>
+          </label>
+
+          <label>Place: <select id="placeType" style="width:140px">
+              <option value="point">Point (TSP)</option>
+              <option value="house">House (transport)</option>
+            </select></label>
+
+          <label>Algorithm:
+            <select id="algorithm">
+              <option value="nearest">Nearest Neighbor (fast)</option>
+              <option value="2opt">Nearest + 2‑Opt</option>
+                <option value="greedy">Greedy Insertion</option>
+                <option value="rr2opt">Random-Restart 2‑Opt</option>
+                <option value="heldkarp">Held‑Karp Exact (small n)</option>
+            </select>
+          </label>
+
+          <label><input type="checkbox" id="closedRoute"/> Close route</label>
+
+          <button id="run">Run</button>
+          <button id="dijkstraRun">Run Dijkstra</button>
+          <button id="profile">Profile & Plot</button>
+        </div>
+  <label>Simulate n points: <input id="simN" type="number" min="2" value="8" style="width:64px"/></label>
+  <label>Runs (z): <input id="simZ" type="number" min="1" value="50" style="width:72px"/></label>
+  <label><input type="checkbox" id="simUseDepot"/> Use depot in simulation</label>
+  <label><input type="checkbox" id="simUseSeed"/> Use seed</label>
+  <label>Seed: <input id="simSeed" type="text" value="12345" style="width:100px"/></label>
+        <label><input type="checkbox" id="includeSA"/> Include Simulated Annealing</label>
+        <label><input type="checkbox" id="includeGA"/> Include Genetic Algorithm</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label>SA iters: <input id="saIters" type="number" value="200" style="width:80px"/></label>
+          <label>GA pop: <input id="gaPop" type="number" value="60" style="width:80px"/></label>
+          <label>GA gen: <input id="gaGen" type="number" value="80" style="width:80px"/></label>
+          <label>GA mut: <input id="gaMut" type="number" value="0.05" step="0.01" style="width:64px"/></label>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <label>New house demand: <input id="houseDemand" type="number" value="1" min="0" step="1" style="width:64px"/></label>
+          <label>Import scenario: <input id="importScenario" type="file" accept="application/json"/></label>
+        </div>
+        <button id="simulate">Simulate</button>
+  <button id="exportCsv">Export CSV</button>
+        <button id="exportScenario">Export Scenario</button>
+        <button id="exportLatex">Export LaTeX Table</button>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <label>Metric:
+            <select id="depotMetric">
+              <option value="grid">Grid shortest-path</option>
+              <option value="euclid">Euclidean</option>
+            </select>
+          </label>
+          <label>Top K: <input id="depotTopK" type="number" min="1" value="1" style="width:64px"/></label>
+          <button id="recommendDepot">Recommend Warehouse</button>
+          <button id="exportDepotCsv" style="margin-left:6px;font-size:12px">Export depot timings CSV</button>
+        </div>
+      </div>
+
+      <div class="main">
+        <canvas id="canvas" width="640" height="640"></canvas>
+        <div class="info">
+          <p>Mode: place points, obstacles or set depot/Dijkstra endpoints. Click cells to toggle.</p>
+          <p id="status">No points yet.</p>
+          <p id="length"></p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <canvas id="chartTime" width="380" height="160" style="background:#fff;border:1px solid #e2e8f0;cursor:pointer" title="Click to zoom"></canvas>
+            <canvas id="chartLen" width="380" height="160" style="background:#fff;border:1px solid #e2e8f0;cursor:pointer" title="Click to zoom"></canvas>
+            <canvas id="chartDepotScores" width="760" height="240" style="background:#fff;border:1px solid #e2e8f0;max-height:240px;" title="Depot candidate scores (click to zoom)"></canvas>
+          </div>
+          <div id="simDetails" style="margin-top:8px;font-size:12px;color:#334155"></div>
+          <div style="margin-top:12px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <div style="font-weight:600">Console log</div>
+              <button id="clearLogBtn" class="btn-small">Clear log</button>
+              <button id="downloadLogBtn" class="btn-small">Download log</button>
+              <label style="margin-left:6px;font-size:12px"><input id="autoDownloadLogs" type="checkbox" /> Auto-download logs on completion</label>
+              <label style="margin-left:8px;font-size:12px">Show:
+                <label style="margin-left:6px"><input id="filterInfo" type="checkbox" checked /> Info</label>
+                <label style="margin-left:6px"><input id="filterWarn" type="checkbox" checked /> Warn</label>
+                <label style="margin-left:6px"><input id="filterError" type="checkbox" checked /> Error</label>
+              </label>
+            </div>
+            <div id="consoleLog" style="height:160px;overflow:auto;background:#0f172a;color:#e6eef8;padding:8px;border-radius:6px;font-family:Consolas,monospace;font-size:12px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal for chart zoom -->
+      <div id="chartModal" class="modal" style="display:none">
+        <div class="modal-content">
+          <button id="modalClose" class="modal-close">×</button>
+          <canvas id="modalChart" width="900" height="600"></canvas>
+        </div>
+      </div>
+
+      <footer>
+        <small>Algorithms included: Nearest Neighbor, 2‑Opt, Held‑Karp (exact, exponential). Held‑Karp limited to small point counts.</small>
+      </footer>
+    </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+  <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "rows": 12,
+  "cols": 12,
+  "seed": 123456,
+  "n": 20,
+  "z": 50,
+  "useDepot": true,
+  "depotStrategy": "recommended",
+  "obstacles": [
+    {"r":4,"c":5},{"r":4,"c":6},{"r":5,"c":6},{"r":6,"c":6},
+    {"r":8,"c":2},{"r":8,"c":3},{"r":8,"c":4}
+  ],
+  "houses": []
+}
