@@ -30,6 +30,7 @@
   const recommendDepotBtn = document.getElementById('recommendDepot');
   const depotMetricSelect = document.getElementById('depotMetric');
   const depotTopKInput = document.getElementById('depotTopK');
+  const normalizeDepotEl = document.getElementById('normalizeDepot');
   const modeSelect = document.getElementById('mode');
   const closedCheckbox = document.getElementById('closedRoute');
   const statusEl = document.getElementById('status');
@@ -230,7 +231,7 @@
   function coords(){return points.map(p=>[p.c+0.5,p.r+0.5]);}
   function dist(a,b){const dx=a[0]-b[0], dy=a[1]-b[1]; return Math.hypot(dx,dy)}
 
-  // NN / 2-opt / Held-Karp (same as before)
+  // NN / 2-opt / Held-Karp
   function nearestNeighbor(pts){ if(pts.length===0) return []; const n=pts.length; const visited=new Array(n).fill(false); const path=[0]; visited[0]=true; for(let k=1;k<n;k++){ let last=path[path.length-1]; let best=-1,bestd=Infinity; for(let i=0;i<n;i++) if(!visited[i]){ const d=dist(pts[last],pts[i]); if(d<bestd){bestd=d; best=i}} path.push(best); visited[best]=true } return path }
   function pathLength(path,pts){ let L=0; for(let i=1;i<path.length;i++) L+=dist(pts[path[i-1]],pts[path[i]]); if(closedCheckbox.checked && path.length>1) L += dist(pts[path[path.length-1]], pts[path[0]]); return L }
   function twoOpt(path,pts){ let improved=true; const n=path.length; while(improved){ improved=false; for(let i=1;i<n-1;i++) for(let k=i+1;k<n;k++){ const newPath = path.slice(0,i).concat(path.slice(i,k+1).reverse(), path.slice(k+1)); if(pathLength(newPath,pts)+1e-9 < pathLength(path,pts)){ path=newPath; improved=true } } } return path }
@@ -276,6 +277,38 @@
 
   // Profiling: run algorithms on random point sets of increasing size and plot length/time
   async function profileAndPlot(){
+    const currentPts = points.slice();
+    if(currentPts && currentPts.length >= 2){
+      // Use the user's current point set for a direct algorithm comparison
+      const eu = currentPts.map(p=>[p.c+0.5,p.r+0.5]);
+      const labels = [];
+      const timeData = [];
+      const lenData = [];
+
+      // Nearest
+      labels.push('Nearest'); let t0 = performance.now(); const nn = nearestNeighbor(eu); let t1 = performance.now(); timeData.push(t1-t0); lenData.push(pathLength(nn,eu));
+
+      // NN + 2-Opt
+      labels.push('2Opt'); t0 = performance.now(); let two = nearestNeighbor(eu); two = twoOpt(two,eu); t1 = performance.now(); timeData.push(t1-t0); lenData.push(pathLength(two,eu));
+
+      // Greedy Insertion
+      labels.push('Greedy'); t0 = performance.now(); const gr = greedyInsertion(eu); t1 = performance.now(); timeData.push(t1-t0); lenData.push(pathLength(gr,eu));
+
+      // Random-restart 2-Opt (small number of restarts)
+      labels.push('RR-2Opt'); t0 = performance.now(); const rr = rrTwoOpt(eu, 6); t1 = performance.now(); timeData.push(t1-t0); lenData.push(pathLength(rr,eu));
+
+      // Held-Karp only if small
+      if(eu.length <= 12){ labels.push('Held-Karp'); t0 = performance.now(); const hk = heldKarp(eu); t1 = performance.now(); timeData.push(t1-t0); lenData.push(pathLength(hk,eu)); }
+
+      // render charts: times and lengths (bar charts)
+      if(chartTime) chartTime.destroy();
+      chartTime = new Chart(chartTimeEl.getContext('2d'), { type:'bar', data:{ labels, datasets:[{ label:'Time (ms)', data: timeData, backgroundColor:'#2563eb' }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } } });
+      if(chartLen) chartLen.destroy();
+      chartLen = new Chart(chartLenEl.getContext('2d'), { type:'bar', data:{ labels, datasets:[{ label:'Length', data: lenData, backgroundColor:'#0ea5a4' }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } } });
+      return;
+    }
+
+    // Fallback: sweep sizes when no user points placed
     const sizes = [4,6,8,10,12];
     const results = {nearest:[], twoopt:[], held:[]};
     for(const n of sizes){
@@ -445,7 +478,7 @@
     depot = depotCandidates[0]; updateStatus(); drawGrid(); statusEl.textContent = `Recommended top ${K} locations, best set as depot.`;
     // plot top-K candidate contributions
     // plot asynchronously and capture errors
-    plotDepotScores(top, targets).catch(e=>{ log('warn', 'Failed plotting depot scores: '+(e && e.message)); console.warn('Failed plotting depot scores', e); });
+  plotDepotScores(top, targets).catch(e=>{ log('warn', 'Failed plotting depot scores: '+(e && e.message)); console.warn('Failed plotting depot scores', e); });
   });
 
     // export depot measured timings (CSV)
@@ -460,6 +493,36 @@
       for(let i=0;i<lastDepotScores.length;i++){ const r=lastDepotScores[i].r, c=lastDepotScores[i].c, sc=lastDepotScores[i].score; const t = (times && times[i]) ? times[i] : ''; rowsOut.push([r,c,sc,t].join(',')); }
       const blob = new Blob([rowsOut.join('\n')], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `depot_timings_${(new Date()).toISOString().replace(/[:.]/g,'-')}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     });
+
+  // Export depot chart as a PNG at higher resolution
+  const exportDepotPngBtn = document.getElementById('exportDepotPng');
+  exportDepotPngBtn?.addEventListener('click', ()=>{
+    if(!chartDepot){ alert('No depot chart to export'); return }
+    // create a temporary canvas to render at 2x resolution for better quality
+    try{
+      const scale = 2; const w = chartDepot.width * scale, h = chartDepot.height * scale;
+      const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h; tmp.style.width = w+'px'; tmp.style.height = h+'px';
+      const ctx = tmp.getContext('2d'); ctx.scale(scale, scale);
+      // render the chart onto the temporary canvas using Chart.js' toBase64Image (works on original canvas)
+      const dataUrl = chartDepot.toBase64Image(); // base64 of current chart
+      // draw the image onto tmp at high-res
+      const img = new Image(); img.onload = ()=>{
+        ctx.drawImage(img, 0, 0, chartDepot.width, chartDepot.height);
+        tmp.toBlob((blob)=>{ const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `depot_chart_${(new Date()).toISOString().replace(/[:.]/g,'-')}.png`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }, 'image/png');
+      };
+      img.src = dataUrl;
+    }catch(e){ alert('Export failed: '+(e&&e.message)); }
+  });
+
+  // Re-plot depot scores when normalize toggle changes (if we have last results)
+  normalizeDepotEl?.addEventListener('change', ()=>{
+    if(!lastDepotScores) return;
+    // reconstruct topScores from lastDepotScores (top K stored at beginning of array)
+    const K = Math.max(1, parseInt(depotTopKInput?.value,10)||1);
+    const top = lastDepotScores.slice(0, K).map(x=>({ cand: { r: x.r, c: x.c }, score: x.score }));
+    const targets = (houses.length ? houses : points.map(p=>({r:p.r,c:p.c,demand:1})));
+    plotDepotScores(top, targets).catch(e=>{ log('warn', 'Failed re-plotting depot scores: '+(e && e.message)); });
+  });
 
   // Import scenario: load JSON and apply to UI/state
   const importInput = document.getElementById('importScenario');
@@ -574,19 +637,37 @@
     const targetCount = targets.length;
     // build datasets: one dataset per target (stacked)
     const datasets = [];
-    for(let t=0;t<Math.min(8,targetCount);t++){ // limit to first 8 targets for clarity
-      const data = topScores.map(s=>{
-        const cand = s.cand; const tgt = targets[t]; if(typeof tgt.demand === 'undefined') tgt.demand = 1;
-        if(depotMetricSelect.value === 'euclid') return (tgt.demand||1)*Math.hypot(cand.c - tgt.c, cand.r - tgt.r);
-        const rec = lastDepotScores && lastDepotScores.find(x=>x.r===cand.r && x.c===cand.c);
-        if(rec && rec.contrib) return rec.contrib[t];
-        return (tgt.demand||1) * (Math.abs(cand.r - tgt.r) + Math.abs(cand.c - tgt.c));
-      });
-      datasets.push({ label: `T${t}`, data, backgroundColor: `hsla(${(t*60)%360},70%,60%,0.7)` });
+    // first compute raw per-target contributions for each candidate (matrix: candidates x targets)
+    const contribMatrix = topScores.map(s => {
+      const cand = s.cand; const row = [];
+      for(let t=0;t<targets.length;t++){
+        const tgt = targets[t]; if(typeof tgt.demand === 'undefined') tgt.demand = 1;
+        if(depotMetricSelect.value === 'euclid') row.push((tgt.demand||1)*Math.hypot(cand.c - tgt.c, cand.r - tgt.r));
+        else {
+          const rec = lastDepotScores && lastDepotScores.find(x=>x.r===cand.r && x.c===cand.c);
+          if(rec && rec.contrib) row.push(rec.contrib[t]); else row.push((tgt.demand||1) * (Math.abs(cand.r - tgt.r) + Math.abs(cand.c - tgt.c)));
+        }
+      }
+      return row;
+    });
+
+    // optionally normalize per-candidate so stacked bars are percentages
+    const normalize = !!(normalizeDepotEl && normalizeDepotEl.checked);
+    const contribToPlot = contribMatrix.map(row => {
+      const total = row.reduce((s,x)=>s+x,0);
+      if(!normalize || total === 0) return row.slice(0, Math.min(8, row.length));
+      return row.slice(0, Math.min(8, row.length)).map(x => 100 * x / total);
+    });
+
+    const targetLimit = Math.min(8, targetCount);
+    for(let t=0;t<targetLimit;t++){
+      const data = contribToPlot.map(r => r[t] || 0);
+      datasets.push({ label: `T${t}`, data, backgroundColor: `hsla(${(t*60)%360},70%,60%,0.85)` });
     }
-    // add total score overlay line
-    const total = topScores.map(s=>s.score);
-    datasets.push({ label: 'Total score', data: total, type:'line', borderColor:'#111827', fill:false, yAxisID:'y' });
+
+    // add total score overlay line (either raw sum or 100 when normalized)
+    const total = topScores.map((s,idx)=> normalize ? 100 : s.score);
+    datasets.push({ label: normalize ? 'Total (%)' : 'Total score', data: total, type:'line', borderColor:'#111827', fill:false, yAxisID:'y' });
     // request measured timings from worker when available (non-blocking)
     let measuredTimes = new Array(topScores.length).fill(0);
     try{
@@ -623,7 +704,7 @@
           }
         },
         scales: {
-          y: { beginAtZero:true, position: 'left', title: { display: true, text: 'Score' }, stacked: true },
+          y: { beginAtZero:true, position: 'left', title: { display: true, text: normalize ? 'Percent (%)' : 'Score' }, stacked: true },
           yTime: { beginAtZero:true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Estimated time (ms)' }, ticks: { beginAtZero:true } }
         }
       }
@@ -701,20 +782,30 @@
 
   function plotSimDetailed(results){
     const {perRun,n,z,useDepot} = results;
-    // prepare arrays
-    const nnTimes = perRun.nearest.map(x=>x.time), nnLens = perRun.nearest.map(x=>x.len);
-    const twoTimes = perRun.twoopt.map(x=>x.time), twoLens = perRun.twoopt.map(x=>x.len);
-    const heldTimes = perRun.held.map(x=>x.time), heldLens = perRun.held.map(x=>x.len);
+  // prepare arrays (pad to length z so chart labels align)
+  function padTimes(arr){ const out=[]; for(let i=0;i<z;i++){ out.push(arr && arr[i] && typeof arr[i].time === 'number' ? arr[i].time : NaN); } return out }
+  function padLens(arr){ const out=[]; for(let i=0;i<z;i++){ out.push(arr && arr[i] && typeof arr[i].len === 'number' ? arr[i].len : NaN); } return out }
+  const nnTimes = padTimes(perRun.nearest), nnLens = padLens(perRun.nearest);
+  const twoTimes = padTimes(perRun.twoopt), twoLens = padLens(perRun.twoopt);
+  const heldTimes = padTimes(perRun.held), heldLens = padLens(perRun.held);
+  const saTimes = padTimes(perRun.sa), saLens = padLens(perRun.sa);
+  const gaTimes = padTimes(perRun.ga), gaLens = padLens(perRun.ga);
+  const cvrpTimes = padTimes(perRun.cvrp), cvrpLens = padLens(perRun.cvrp);
+  // flags whether the scenario requested these algorithms (fall back to presence in results)
+  const includeSAFlag = (results.scenario && results.scenario.includeSA) || (perRun.sa && perRun.sa.length>0);
+  const includeGAFlag = (results.scenario && results.scenario.includeGA) || (perRun.ga && perRun.ga.length>0);
+  const includeCVRPFlag = (results.scenario && results.scenario.includeCVRP) || (perRun.cvrp && perRun.cvrp.length>0);
     // time chart: scatter per-run + mean line
     const labels = Array.from({length:z},(_,i)=>String(i+1));
-    if(chartTime) chartTime.destroy();
-    chartTime = new Chart(chartTimeEl.getContext('2d'), {
-      type:'line', data:{ labels, datasets:[
-        { label:'NN time (ms)', data: nnTimes, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.08)', fill:true, tension:0.2, pointRadius:2 },
-        { label:'2Opt time (ms)', data: twoTimes, borderColor:'#0ea5a4', backgroundColor:'rgba(14,165,164,0.08)', fill:true, tension:0.2, pointRadius:2 },
-        { label:'Held time (ms)', data: heldTimes, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,0.06)', fill:true, tension:0.2, pointRadius:2 }
-      ] }, options:{ responsive:true, scales:{ y:{ beginAtZero:true } }, plugins:{ legend:{ position:'bottom' } } }
-    });
+  if(chartTime) chartTime.destroy();
+  const timeDatasets = [];
+  timeDatasets.push({ label:'NN time (ms)', data: nnTimes, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.08)', fill:true, tension:0.2, pointRadius:2 });
+  timeDatasets.push({ label:'2Opt time (ms)', data: twoTimes, borderColor:'#0ea5a4', backgroundColor:'rgba(14,165,164,0.08)', fill:true, tension:0.2, pointRadius:2 });
+  if(perRun.held && perRun.held.length) timeDatasets.push({ label:'Held time (ms)', data: heldTimes, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,0.06)', fill:true, tension:0.2, pointRadius:2 });
+  if(includeSAFlag) timeDatasets.push({ label:'SA time (ms)', data: saTimes, borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,0.06)', fill:true, tension:0.2, pointRadius:2 });
+  if(includeGAFlag) timeDatasets.push({ label:'GA time (ms)', data: gaTimes, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,0.06)', fill:true, tension:0.2, pointRadius:2 });
+  if(includeCVRPFlag) timeDatasets.push({ label:'CVRP time (ms)', data: cvrpTimes, borderColor:'#0b74a8', backgroundColor:'rgba(11,116,168,0.06)', fill:true, tension:0.2, pointRadius:2 });
+  chartTime = new Chart(chartTimeEl.getContext('2d'), { type:'line', data:{ labels, datasets: timeDatasets }, options:{ responsive:true, scales:{ y:{ beginAtZero:true } }, plugins:{ legend:{ position:'bottom' } } } });
     // allow clicking to zoom: attach handlers to canvases
   chartTimeEl.onclick = ()=> openModalWithChart('time');
   chartLenEl.onclick = ()=> openModalWithChart('len');
@@ -729,11 +820,18 @@
   const datasets = [];
   datasets.push({ label:'NN', data: nnLens, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.08)', fill:true, tension:0.2, pointRadius:3 });
   datasets.push({ label:'2Opt', data: twoLens, borderColor:'#0ea5a4', backgroundColor:'rgba(14,165,164,0.08)', fill:true, tension:0.2, pointRadius:3 });
-  if(heldLens.length) datasets.push({ label:'Held', data: heldLens, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,0.06)', fill:true, tension:0.2, pointRadius:3 });
+  if(perRun.held && perRun.held.length) datasets.push({ label:'Held', data: heldLens, borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,0.06)', fill:true, tension:0.2, pointRadius:3 });
+  if(includeSAFlag) datasets.push({ label:'SA', data: saLens, borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,0.06)', fill:true, tension:0.2, pointRadius:3 });
+  if(includeGAFlag) datasets.push({ label:'GA', data: gaLens, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,0.06)', fill:true, tension:0.2, pointRadius:3 });
+  if(includeCVRPFlag) datasets.push({ label:'CVRP', data: cvrpLens, borderColor:'#0b74a8', backgroundColor:'rgba(11,116,168,0.06)', fill:true, tension:0.2, pointRadius:3 });
   // overlay mean lines
-  datasets.push({ label:'NN mean', data: Array(z).fill(nnCI[0]), type:'line', borderColor:'#ef4444', borderDash:[6,6], fill:false, pointRadius:0 });
-  datasets.push({ label:'2Opt mean', data: Array(z).fill(twoCI[0]), type:'line', borderColor:'#0ea5a4', borderDash:[6,6], fill:false, pointRadius:0 });
+  // overlay mean lines for present algorithms
+  if(nnLens.some(Number.isFinite)) datasets.push({ label:'NN mean', data: Array(z).fill(nnCI[0]), type:'line', borderColor:'#ef4444', borderDash:[6,6], fill:false, pointRadius:0 });
+  if(twoLens.some(Number.isFinite)) datasets.push({ label:'2Opt mean', data: Array(z).fill(twoCI[0]), type:'line', borderColor:'#0ea5a4', borderDash:[6,6], fill:false, pointRadius:0 });
   if(heldCI) datasets.push({ label:'Held mean', data: Array(z).fill(heldCI[0]), type:'line', borderColor:'#2563eb', borderDash:[6,6], fill:false, pointRadius:0 });
+  if(includeSAFlag){ const saFinite = saLens.filter(Number.isFinite); const saCI = saFinite.length ? bootstrapCI(saFinite) : null; if(saCI) datasets.push({ label:'SA mean', data: Array(z).fill(saCI[0]), type:'line', borderColor:'#7c3aed', borderDash:[6,6], fill:false, pointRadius:0 }); }
+  if(includeGAFlag){ const gaFinite = gaLens.filter(Number.isFinite); const gaCI = gaFinite.length ? bootstrapCI(gaFinite) : null; if(gaCI) datasets.push({ label:'GA mean', data: Array(z).fill(gaCI[0]), type:'line', borderColor:'#f59e0b', borderDash:[6,6], fill:false, pointRadius:0 }); }
+  if(includeCVRPFlag){ const cvFinite = cvrpLens.filter(Number.isFinite); const cvCI = cvFinite.length ? bootstrapCI(cvFinite) : null; if(cvCI) datasets.push({ label:'CVRP mean', data: Array(z).fill(cvCI[0]), type:'line', borderColor:'#0b74a8', borderDash:[6,6], fill:false, pointRadius:0 }); }
   // create chart
   chartLen = new Chart(ctx, { type:'line', data:{ labels, datasets }, options:{ responsive:true, scales:{ y:{ beginAtZero:true } }, plugins:{ legend:{ position:'bottom' } } } });
     // paired t-test NN vs 2Opt lengths (paired by run)
@@ -743,9 +841,12 @@
     // details: means and stddev
     const details = [];
     details.push(`Simulated n=${n}, z=${z}, depot=${useDepot? 'yes':'no'}`);
-    details.push(`NN: mean time=${mean(nnTimes).toFixed(3)}ms, std=${std(nnTimes).toFixed(3)}ms, mean len=${mean(nnLens).toFixed(3)}`);
-    details.push(`2Opt: mean time=${mean(twoTimes).toFixed(3)}ms, std=${std(twoTimes).toFixed(3)}ms, mean len=${mean(twoLens).toFixed(3)}`);
-  if(heldTimes.length) details.push(`Held: mean time=${mean(heldTimes).toFixed(3)}ms, std=${std(heldTimes).toFixed(3)}ms, mean len=${mean(heldLens).toFixed(3)}`);
+    details.push(`NN: mean time=${Number.isFinite(mean(nnTimes))?mean(nnTimes).toFixed(3):'n/a'}ms, std=${Number.isFinite(std(nnTimes))?std(nnTimes).toFixed(3):'n/a'}, mean len=${Number.isFinite(mean(nnLens))?mean(nnLens).toFixed(3):'n/a'}`);
+    details.push(`2Opt: mean time=${Number.isFinite(mean(twoTimes))?mean(twoTimes).toFixed(3):'n/a'}ms, std=${Number.isFinite(std(twoTimes))?std(twoTimes).toFixed(3):'n/a'}, mean len=${Number.isFinite(mean(twoLens))?mean(twoLens).toFixed(3):'n/a'}`);
+  if(perRun.held && perRun.held.length) details.push(`Held: mean time=${mean(heldTimes).toFixed(3)}ms, std=${std(heldTimes).toFixed(3)}ms, mean len=${mean(heldLens).toFixed(3)}`);
+  if(includeSAFlag) details.push(`SA: mean time=${Number.isFinite(mean(saTimes))?mean(saTimes).toFixed(3):'n/a'}ms, std=${Number.isFinite(std(saTimes))?std(saTimes).toFixed(3):'n/a'}, mean len=${Number.isFinite(mean(saLens))?mean(saLens).toFixed(3):'n/a'}`);
+  if(includeGAFlag) details.push(`GA: mean time=${Number.isFinite(mean(gaTimes))?mean(gaTimes).toFixed(3):'n/a'}ms, std=${Number.isFinite(std(gaTimes))?std(gaTimes).toFixed(3):'n/a'}, mean len=${Number.isFinite(mean(gaLens))?mean(gaLens).toFixed(3):'n/a'}`);
+  if(includeCVRPFlag) details.push(`CVRP: mean time=${Number.isFinite(mean(cvrpTimes))?mean(cvrpTimes).toFixed(3):'n/a'}ms, std=${Number.isFinite(std(cvrpTimes))?std(cvrpTimes).toFixed(3):'n/a'}, mean len=${Number.isFinite(mean(cvrpLens))?mean(cvrpLens).toFixed(3):'n/a'}`);
   details.push(`Paired t-test NN vs 2Opt lengths: t=${isNaN(ttest.t)?'n/a':ttest.t.toFixed(3)}, p≈${isNaN(ttest.p)?'n/a':ttest.p.toExponential(2)}`);
     simDetailsEl.textContent = details.join('\n');
   }
@@ -791,9 +892,12 @@
     const rowsOut = [];
     rowsOut.push(['run','algo','time_ms','length','n','useDepot'].join(','));
     for(let i=0;i<z;i++){
-      const nn = perRun.nearest[i]; rowsOut.push([i+1,'nearest',nn.time.toFixed(6),nn.len.toFixed(6),n,useDepot].join(','));
-      const two = perRun.twoopt[i]; rowsOut.push([i+1,'twoopt',two.time.toFixed(6),two.len.toFixed(6),n,useDepot].join(','));
-      if(perRun.held[i]){ const h = perRun.held[i]; rowsOut.push([i+1,'held',h.time.toFixed(6),h.len.toFixed(6),n,useDepot].join(',')); }
+  if(perRun.nearest[i]){ const nn = perRun.nearest[i]; rowsOut.push([i+1,'nearest', (nn.time||0).toFixed(6), (nn.len||NaN).toFixed(6),n,useDepot].join(',')); }
+  if(perRun.twoopt[i]){ const two = perRun.twoopt[i]; rowsOut.push([i+1,'twoopt', (two.time||0).toFixed(6), (two.len||NaN).toFixed(6),n,useDepot].join(',')); }
+  if(perRun.held[i]){ const h = perRun.held[i]; rowsOut.push([i+1,'held', (h.time||0).toFixed(6), (h.len||NaN).toFixed(6),n,useDepot].join(',')); }
+  if(perRun.sa && perRun.sa[i]){ const s = perRun.sa[i]; rowsOut.push([i+1,'sa', (s.time||0).toFixed(6), (s.len||NaN).toFixed(6),n,useDepot].join(',')); }
+  if(perRun.ga && perRun.ga[i]){ const g = perRun.ga[i]; rowsOut.push([i+1,'ga', (g.time||0).toFixed(6), (g.len||NaN).toFixed(6),n,useDepot].join(',')); }
+  if(perRun.cvrp && perRun.cvrp[i]){ const c = perRun.cvrp[i]; rowsOut.push([i+1,'cvrp', (c.time||0).toFixed(6), (c.len||NaN).toFixed(6),n,useDepot].join(',')); }
     }
     const csv = rowsOut.join('\n');
     const blob = new Blob([csv],{type:'text/csv'});
@@ -804,7 +908,7 @@
   // Automation helpers for headless runners (Puppeteer etc.)
   try{
     window.__getLastSimResults = function(){ return lastSimResults }; // returns the raw results object
-    window.__exportSimCsv = function(){ if(!lastSimResults) return null; const {perRun,n,z,useDepot} = lastSimResults; const rowsOut = []; rowsOut.push(['run','algo','time_ms','length','n','useDepot'].join(',')); for(let i=0;i<z;i++){ const nn = perRun.nearest[i]; rowsOut.push([i+1,'nearest',nn.time.toFixed(6),nn.len.toFixed(6),n,useDepot].join(',')); const two = perRun.twoopt[i]; rowsOut.push([i+1,'twoopt',two.time.toFixed(6),two.len.toFixed(6),n,useDepot].join(',')); if(perRun.held[i]){ const h = perRun.held[i]; rowsOut.push([i+1,'held',h.time.toFixed(6),h.len.toFixed(6),n,useDepot].join(',')); } } return rowsOut.join('\n'); };
+  window.__exportSimCsv = function(){ if(!lastSimResults) return null; const {perRun,n,z,useDepot} = lastSimResults; const rowsOut = []; rowsOut.push(['run','algo','time_ms','length','n','useDepot'].join(',')); for(let i=0;i<z;i++){ if(perRun.nearest[i]){ const nn = perRun.nearest[i]; rowsOut.push([i+1,'nearest',(nn.time||0).toFixed(6),(nn.len||NaN).toFixed(6),n,useDepot].join(',')); } if(perRun.twoopt[i]){ const two = perRun.twoopt[i]; rowsOut.push([i+1,'twoopt',(two.time||0).toFixed(6),(two.len||NaN).toFixed(6),n,useDepot].join(',')); } if(perRun.held[i]){ const h = perRun.held[i]; rowsOut.push([i+1,'held',(h.time||0).toFixed(6),(h.len||NaN).toFixed(6),n,useDepot].join(',')); } if(perRun.sa && perRun.sa[i]){ const s = perRun.sa[i]; rowsOut.push([i+1,'sa',(s.time||0).toFixed(6),(s.len||NaN).toFixed(6),n,useDepot].join(',')); } if(perRun.ga && perRun.ga[i]){ const g = perRun.ga[i]; rowsOut.push([i+1,'ga',(g.time||0).toFixed(6),(g.len||NaN).toFixed(6),n,useDepot].join(',')); } if(perRun.cvrp && perRun.cvrp[i]){ const c = perRun.cvrp[i]; rowsOut.push([i+1,'cvrp',(c.time||0).toFixed(6),(c.len||NaN).toFixed(6),n,useDepot].join(',')); } } return rowsOut.join('\n'); };
     window.__getLastDepotScores = function(){ return lastDepotScores };
     window.__exportLastDepotCsv = function(){ if(!lastDepotScores) return null; let times = null; try{ if(chartDepot){ const ds = chartDepot.data.datasets; const mt = ds.find(d=>d.label==='Measured time (ms)'); if(mt) times = mt.data; } }catch(e){} const rowsOut = [['r','c','score','measured_time_ms'].join(',')]; for(let i=0;i<lastDepotScores.length;i++){ const r=lastDepotScores[i].r, c=lastDepotScores[i].c, sc=lastDepotScores[i].score; const t = (times && times[i]) ? times[i] : ''; rowsOut.push([r,c,sc,t].join(',')); } return rowsOut.join('\n'); };
   }catch(e){ console.warn('Automation helpers failed to attach:', e); }
